@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Space Debris</title>
+  <script src="https://aframe.io/releases/0.7.0/aframe.min.js"></script>
+  <script src="https://cdn.rawgit.com/donmccurdy/aframe-physics-system/v2.1.0/dist/aframe-physics-system.min.js"></script>
+</head>
+
+<body>
+  <script>
+    /**
+     * Force Pushable component.
+     *
+     * Applies behavior to the current entity such that cursor clicks will apply a
+     * strong impulse, pushing the entity away from the viewer.
+     *
+     * Requires: physics
+     */
+    AFRAME.registerComponent('force-pushable', {
+      schema: {
+        force: { default: 2 }
+      },
+      init: function () {
+        this.pStart = new THREE.Vector3()
+        this.sourceEl = this.el.sceneEl.querySelector('[camera]')
+        this.el.addEventListener('click', this.forcePush.bind(this))
+      },
+      forcePush: function () {
+        var force,
+          el = this.el,
+          pStart = this.pStart.copy(this.sourceEl.getAttribute('position'))
+
+        // Compute direction of force, normalize, then scale.
+        force = el.body.position.vsub(pStart)
+        force.normalize()
+        force.scale(this.data.force, force)
+
+        el.body.applyImpulse(force, el.body.position)
+      }
+    })
+    /**
+     * like force-pushable but positions object at camera
+     */
+    AFRAME.registerComponent('force-start', {
+      schema: {
+        force: { default: 10 }
+      },
+      init: function () {
+        this.pStart = new THREE.Vector3()
+        this.sourceEl = this.el.sceneEl.querySelector('[camera]')
+        window.addEventListener('click', this.forcePush.bind(this))
+      },
+      forcePush: function () {
+        var force
+          el = this.el
+
+        // Compute direction of force, normalize, then scale.
+        // force = (new CANNON.Vec3()).copy(this.sourceEl.object3D.getWorldDirection()),
+        force = new THREE.Vector3( 0, 0, - 1 );
+        // Now, apply the same rotation to the vector that is applied to the camera:
+        force.applyQuaternion( this.sourceEl.object3D.quaternion )
+        force = (new CANNON.Vec3()).copy(force)
+        
+        force.normalize()
+        force.scale(this.data.force, force)
+   
+        el.body.position.copy(this.sourceEl.getAttribute('position'))
+        el.body.velocity.copy(force)
+        el.body.angularVelocity.set(12, 6, 3)
+      }
+    })
+    AFRAME.registerComponent('player-missile', {
+      dependencies: [
+        'dynamic-body', 'force-start'
+      ]
+    })
+    AFRAME.registerComponent('space-rock', {
+      dependencies: [
+        'dynamic-body', 'force-pushable'
+      ]
+    })
+  </script>
+
+  <a-scene log="hello scene" physics="debug: true; gravity: 0">
+    <a-assets>
+      <img id="skyTexture" src="assets/PIA15482_hires.jpg">
+      <img id="groundTexture" src="assets/grid.png">
+      <img id="rockTexture" src="assets/lunar_target.jpg">
+      <img id="missleTexture" src="assets/plasma.jpg">
+    </a-assets>
+
+    <a-box space-rock position="-1 0.5 -3" rotation="0 45 0" src="#rockTexture"></a-box>
+    <a-sphere space-rock dynamic-body velocity="0.3 0.1 0" position="0 1.25 -5" radius="1.25" src="#rockTexture"></a-sphere>
+    <a-cylinder space-rock velocity="-0.2 -0.3 -0.1" position="1 0.75 -3" radius="0.5" height="1.5" src="#rockTexture"></a-cylinder>
+
+    <a-sphere player-missile position="0 3 -9" radius="1.25" src="#missleTexture" emissive="#b60"></a-sphere>
+
+    <!-- playfield, controls, camera -->
+    <a-plane src="#groundTexture" position="0 0 0" rotation="-90 0 0" width="10" height="10" material="transparent: true"></a-plane>
+    <a-sky src="#skyTexture"></a-sky>
+    <a-entity camera="userHeight: 1.6" look-controls wasd-controls position="0 0.1 0">
+      <a-entity cursor position="0 0 -0.5" geometry="primitive: circle; radius: 0.01; segments: 4;" material="color: #FF4444; shader: flat"></a-entity>
+    </a-entity>
+    <a-entity static-body="shape: sphere; sphereRadius: 0.02;" vive-controls="hand: left" sphere-collider="objects: [dynamic-body];"
+      grab></a-entity>
+    <a-entity static-body="shape: sphere; sphereRadius: 0.02;" vive-controls="hand: right" sphere-collider="objects: [dynamic-body];"
+      grab></a-entity>
+  </a-scene>
+</body>
+
+</html>
