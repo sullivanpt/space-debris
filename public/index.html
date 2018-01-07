@@ -5,6 +5,7 @@
   <title>Space Debris</title>
   <script src="https://aframe.io/releases/0.7.0/aframe.min.js"></script>
   <script src="https://cdn.rawgit.com/donmccurdy/aframe-physics-system/v2.1.0/dist/aframe-physics-system.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lodash@4.17.4/lodash.min.js"></script>
 </head>
 
 <body>
@@ -49,7 +50,7 @@
       init: function () {
         this.pStart = new THREE.Vector3()
         this.sourceEl = this.el.sceneEl.querySelector('[camera]')
-        window.addEventListener('click', this.forcePush.bind(this))
+        window.addEventListener('click', _.throttle(this.forcePush.bind(this), 1000, { trailing: false }))
       },
       forcePush: function () {
         var force
@@ -68,11 +69,25 @@
         el.body.position.copy(this.sourceEl.getAttribute('position'))
         el.body.velocity.copy(force)
         el.body.angularVelocity.set(12, 6, 3)
+
+        el.components.sound.playSound()
+      }
+    })
+    AFRAME.registerComponent('missile-collider', {
+      init: function () {
+        this.soundEl = this.el.sceneEl.querySelector('#rockExplosion')
+        this.el.addEventListener('collide', this.collide.bind(this))
+      },
+      collide: function (e) {
+          // seems to be a bug playing same pre-loaded sound from many entities, so we share one and move it
+          this.soundEl.setAttribute('position', e.detail.body.el.getAttribute('position'))
+          this.soundEl.components.sound.playSound()
+          e.detail.target.el.body.velocity.set(0,0,0) // TODO: remove it
       }
     })
     AFRAME.registerComponent('player-missile', {
       dependencies: [
-        'dynamic-body', 'force-start'
+        'dynamic-body', 'force-start', 'missile-collider'
       ]
     })
     AFRAME.registerComponent('space-rock', {
@@ -82,22 +97,31 @@
     })
   </script>
 
-  <a-scene log="hello scene" physics="debug: true; gravity: 0">
+  <a-scene physics="gravity: 0">
     <a-assets>
+      <!-- audio element broken https://github.com/aframevr/aframe/issues/2754 -->
+      <a-asset-item id="themeSound" src="assets/jaws-theme.mp3" response-type="arraybuffer"></a-asset-item>
+      <a-asset-item id="missileSound" src="assets/firecast.wav" response-type="arraybuffer"></a-asset-item>
+      <a-asset-item id="explosionSound" src="assets/explosion-10.mp3" response-type="arraybuffer"></a-asset-item>
       <img id="skyTexture" src="assets/PIA15482_hires.jpg">
       <img id="groundTexture" src="assets/grid.png">
       <img id="rockTexture" src="assets/lunar_target.jpg">
-      <img id="missleTexture" src="assets/plasma.jpg">
+      <img id="missileTexture" src="assets/plasma.jpg">
     </a-assets>
 
     <a-box space-rock position="-1 0.5 -3" rotation="0 45 0" src="#rockTexture"></a-box>
     <a-sphere space-rock dynamic-body velocity="0.3 0.1 0" position="0 1.25 -5" radius="1.25" src="#rockTexture"></a-sphere>
     <a-cylinder space-rock velocity="-0.2 -0.3 -0.1" position="1 0.75 -3" radius="0.5" height="1.5" src="#rockTexture"></a-cylinder>
 
-    <a-sphere player-missile position="0 3 -9" radius="1.25" src="#missleTexture" emissive="#b60"></a-sphere>
+    <a-entity id="rockExplosion" sound="src: #explosionSound; volume: 10" position="0 10 10"></a-entity>
+    <a-sphere player-missile
+    sound="src: #missileSound; volume: 5"
+    position="0 3 -9" radius="1.25" src="#missileTexture" emissive="#b60"></a-sphere>
 
     <!-- playfield, controls, camera -->
-    <a-plane src="#groundTexture" position="0 0 0" rotation="-90 0 0" width="10" height="10" material="transparent: true"></a-plane>
+    <a-plane 
+    sound="src: #themeSound; loop: true; autoplay: true"
+    src="#groundTexture" position="0 0 0" rotation="-90 0 0" width="10" height="10" material="transparent: true"></a-plane>
     <a-sky src="#skyTexture"></a-sky>
     <a-entity camera="userHeight: 1.6" look-controls wasd-controls position="0 0.1 0">
       <a-entity cursor position="0 0 -0.5" geometry="primitive: circle; radius: 0.01; segments: 4;" material="color: #FF4444; shader: flat"></a-entity>
