@@ -83,9 +83,14 @@
       init: function () {
         this.pStart = new THREE.Vector3()
         this.sourceEl = this.el.sceneEl.querySelector('[camera]')
-        window.addEventListener('click', _.throttle(this.forcePush.bind(this), 1000, { trailing: false }))
+        window.addEventListener('click', _.throttle(this.onCursor.bind(this), 1000, { trailing: false }))
+        window.addEventListener('triggerdown', _.throttle(this.onTrigger.bind(this), 1000, { trailing: false }))
       },
-      forcePush: function () {
+      onTrigger: function () {
+        // this is wmr trigger
+        this.onCursor()
+      },
+      onCursor: function () {
         var force
         el = this.el
 
@@ -206,6 +211,7 @@
     <!-- playfield, controls, camera -->
     <a-plane visible="false" sound="src: #themeSound; loop: true; autoplay: true" position="0 0 0" rotation="-90 0 0" width="10"></a-plane>
     <a-sky src="#skyTexture"></a-sky>
+    <!-- register a collider with rock -->
     <a-entity id="thePlayer" camera="userHeight: 1.6" look-controls wasd-controls position="0 0.1 0" player-collider static-body="shape: sphere; sphereRadius: 0.02;"
       sphere-collider="objects: [space-rock];">
       <a-entity cursor position="0 0 -0.5" geometry="primitive: circle; radius: 0.01; segments: 4;" material="color: #FF4444; shader: flat"></a-entity>
@@ -216,9 +222,9 @@
       </a-entity>
       <a-entity id="endBuzzer" sound="src: #endSound; volume: 10" position="0 0 0"></a-entity>
     </a-entity>
-    <!-- register a collider with rock -->
-    <a-entity vive-controls="hand: left"></a-entity>
-    <a-entity vive-controls="hand: right"></a-entity>
+    <!-- laser-controls not working with wmr -->
+    <a-entity windows-motion-controls="hand: left"></a-entity>
+    <a-entity windows-motion-controls="hand: right"></a-entity>
   </a-scene>
 </body>
 
