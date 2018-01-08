@@ -12,6 +12,67 @@
 
 <body>
   <script>
+    AFRAME.registerComponent('hud-score', {
+      init: function () {
+        this.textEls = this.el.querySelectorAll('a-text')
+        this.el.sceneEl.addEventListener('rock-hit-missile', this.rockHitMissile.bind(this))
+        this.el.sceneEl.addEventListener('rock-hit-player', this.rockHitPlayer.bind(this))
+        this.resetScore()
+      },
+      tick: function () {
+        if (this.prune()) this.format()
+      },
+      resetScore: function () {
+        this.total = 0
+        this.history = []
+        this.format()
+      },
+      prune: function () {
+        if (!this.history.length) return
+        let tClip = Date.now() - 2000 // 2 seconds until +amount is added to total
+        let expired = _.remove(this.history, e => e.ts < tClip)
+        _.forEach(expired, e => { this.total += e.amount })
+        return expired.length
+      },
+      format: function () {
+        let s = '' + this.total + '\n' + this.history.map(a => '+' + a.amount).join('\n')
+        _.forEach(this.textEls, (el) => el.setAttribute('value', s))
+      },
+      addScore: function (amount) {
+        this.history.push({ ts: Date.now(), amount })
+        this.prune()
+        this.format()
+      },
+      rockHitMissile: function () {
+        this.addScore(10)
+      },
+      rockHitPlayer: function () {
+        this.resetScore()
+      }
+    })
+    AFRAME.registerComponent('playfield-marker', {})
+    AFRAME.registerComponent('playfield-wrap', {
+      init: function () {
+        this.max = 10 + 1
+        this.tPos = new THREE.Vector3()
+      },
+      tick: function () {
+        const max = this.max
+        let changed
+        let tPos = this.tPos.copy(this.el.object3D.position)
+        if (tPos.x > max) { tPos.x = -max + 1; changed = true }
+        if (tPos.x < -max) { tPos.x = max - 1; changed = true }
+        if (tPos.y > max) { tPos.y = -max + 1; changed = true }
+        if (tPos.y < -max) { tPos.y = max - 1; changed = true }
+        if (tPos.z > max) { tPos.z = -max + 1; changed = true }
+        if (tPos.z < -max) { tPos.z = max - 1; changed = true }
+        if (changed) {
+          // updating e.object3D.position or el.setAttribute('position', ...) do not stick
+          this.el.body.position.copy(tPos)
+          this.el.emit('playfield-close')
+        }
+      }
+    })
     /**
      * like force-pushable but positions object at camera
      */
@@ -42,6 +103,8 @@
         el.body.velocity.copy(force)
         el.body.angularVelocity.set(12, 6, 3)
 
+        el.setAttribute('visible', true)
+
         el.components.sound.playSound()
       }
     })
@@ -51,53 +114,38 @@
         this.el.addEventListener('collide', this.collide.bind(this))
       },
       collide: function (e) {
+        // physics filters do not seem to work
+        if (e.detail.body.el.id === 'thePlayer') return
         // seems to be a bug playing same pre-loaded sound from many entities, so we share one and move it
         this.soundEl.setAttribute('position', e.detail.body.el.getAttribute('position'))
         this.soundEl.components.sound.playSound()
-        e.detail.target.el.body.velocity.set(0, 0, 0) // TODO: remove it
+        // hide missle
+        e.detail.target.el.body.velocity.set(0, 0, 0)
+        e.detail.target.el.setAttribute('visible', false)
         this.el.sceneEl.emit('rock-hit-missile')
+      }
+    })
+    AFRAME.registerComponent('player-collider', {
+      init: function () {
+        this.soundEl = this.el.sceneEl.querySelector('#endBuzzer')
+        this.el.addEventListener('collide', this.collide.bind(this))
+      },
+      collide: function (e) {
+        // physics filters do not seem to work
+        if (e.detail.body.el.id === 'playerMissile') return
+        this.soundEl.components.sound.playSound()
+        this.el.sceneEl.emit('rock-hit-player')
       }
     })
     AFRAME.registerComponent('player-missile', {
       dependencies: [
-        'dynamic-body', 'missile-start', 'missile-collider'
+        'missile-start', 'missile-collider'
       ]
     })
     AFRAME.registerComponent('space-rock', {
       dependencies: [
-        'dynamic-body'
+        'dynamic-body', 'playfield-wrap'
       ]
-    })
-    AFRAME.registerComponent('hud-score', {
-      init: function () {
-        this.total = 0
-        this.history = []
-        this.textEls = this.el.querySelectorAll('a-text')
-        this.format()
-        this.el.sceneEl.addEventListener('rock-hit-missile', this.rockHitMissile.bind(this))
-      },
-      tick: function () {
-        if (this.prune()) this.format()
-      },
-      prune: function () {
-        if (!this.history.length) return
-        let tClip = Date.now() - 2000 // 2 seconds until +amount is added to total
-        let expired = _.remove(this.history, e => e.ts < tClip)
-        _.forEach(expired, e => { this.total += e.amount })
-        return expired.length
-      },
-      format: function () {
-        let s = '' + this.total + '\n' + this.history.map(a => '+' + a.amount).join('\n')
-        _.forEach(this.textEls, (el) => el.setAttribute('value', s))
-      },
-      addScore: function (amount) {
-        this.history.push({ ts: Date.now(), amount })
-        this.prune()
-        this.format()
-      },
-      rockHitMissile: function () {
-        this.addScore(10)
-      }
     })
   </script>
 
@@ -107,31 +155,68 @@
       <a-asset-item id="themeSound" src="assets/jaws-theme.mp3" response-type="arraybuffer"></a-asset-item>
       <a-asset-item id="missileSound" src="assets/firecast.wav" response-type="arraybuffer"></a-asset-item>
       <a-asset-item id="explosionSound" src="assets/explosion-10.mp3" response-type="arraybuffer"></a-asset-item>
+      <a-asset-item id="endSound" src="assets/buzzer3.wav" response-type="arraybuffer"></a-asset-item>
       <img id="skyTexture" src="assets/PIA15482_hires.jpg">
-      <img id="groundTexture" src="assets/grid.png">
       <img id="rockTexture" src="assets/lunar_target.jpg">
       <img id="missileTexture" src="assets/plasma.jpg">
     </a-assets>
 
-    <a-box space-rock position="-1 0.5 -3" rotation="0 45 0" src="#rockTexture"></a-box>
-    <a-sphere space-rock dynamic-body velocity="0.3 0.1 0" position="0 1.25 -5" radius="1.25" src="#rockTexture"></a-sphere>
-    <a-cylinder space-rock velocity="-0.2 -0.3 -0.1" position="1 0.75 -3" radius="0.5" height="1.5" src="#rockTexture"></a-cylinder>
+    <!-- enemies -->
+    <a-cone space-rock position="-1 0.5 -3" rotation="0 45 0" src="#rockTexture">
+      <a-animation begin="playfield-close" attribute="material.opacity" from="0" to="1" dur="500" repeat="2"></a-animation>
+    </a-cone>
+    <a-sphere space-rock velocity="0.3 0.1 0" position="0 1.25 -5" radius="2.25" src="#rockTexture">
+      <a-animation begin="playfield-close" attribute="material.opacity" from="0" to="1" dur="500" repeat="2"></a-animation>
+    </a-sphere>
+    <a-cylinder space-rock velocity="-0.2 -0.3 -0.1" position="1 0.75 -3" radius="0.5" height="1.5" src="#rockTexture">
+      <a-animation begin="playfield-close" attribute="material.opacity" from="0" to="1" dur="500" repeat="2"></a-animation>
+    </a-cylinder>
 
+    <!-- missiles -->
     <a-entity id="rockExplosion" sound="src: #explosionSound; volume: 10" position="0 10 10"></a-entity>
-    <a-sphere player-missile sound="src: #missileSound; volume: 5" position="0 3 -9" radius="1.25" src="#missileTexture" emissive="#b60"></a-sphere>
+    <a-sphere id="playerMissile" player-missile dynamic-body="mass: 20" sound="src: #missileSound; volume: 5" visible="false"
+      position="0 0 -30" radius="1.25" src="#missileTexture" emissive="#b60"></a-sphere>
+
+    <!-- playfield boundary indicators -->
+    <a-box playfield-marker position="10.11 10.11 10.11" color="#f00">
+      <a-animation attribute="material.color" from="red" to="orange" dur="500" direction="alternate" repeat="indefinite"></a-animation>
+    </a-box>
+    <a-box playfield-marker position="-10.11 10.11 10.11" color="#f00">
+      <a-animation attribute="material.color" from="yellow" to="orange" dur="500" direction="alternate" repeat="indefinite"></a-animation>
+    </a-box>
+    <a-box playfield-marker position="10.11 -10.11 10.11" color="#f00">
+      <a-animation attribute="material.color" from="yellow" to="orange" dur="500" direction="alternate" repeat="indefinite"></a-animation>
+    </a-box>
+    <a-box playfield-marker position="-10.11 -10.11 10.11" color="#f00">
+      <a-animation attribute="material.color" from="yellow" to="orange" dur="500" direction="alternate" repeat="indefinite"></a-animation>
+    </a-box>
+    <a-box playfield-marker position="10.11 10.11 -10.11" color="#f00">
+      <a-animation attribute="material.color" from="yellow" to="orange" dur="500" direction="alternate" repeat="indefinite"></a-animation>
+    </a-box>
+    <a-box playfield-marker position="-10.11 10.11 -10.11" color="#f00">
+      <a-animation attribute="material.color" from="yellow" to="orange" dur="500" direction="alternate" repeat="indefinite"></a-animation>
+    </a-box>
+    <a-box playfield-marker position="10.11 -10.11 -10.11" color="#f00">
+      <a-animation attribute="material.color" from="yellow" to="orange" dur="500" direction="alternate" repeat="indefinite"></a-animation>
+    </a-box>
+    <a-box playfield-marker position="-10.11 -10.11 -10.11" color="#f00">
+      <a-animation attribute="material.color" from="yellow" to="orange" dur="500" direction="alternate" repeat="indefinite"></a-animation>
+    </a-box>
 
     <!-- playfield, controls, camera -->
-    <a-plane sound="src: #themeSound; loop: true; autoplay: true" src="#groundTexture" position="0 0 0" rotation="-90 0 0" width="10"
-      height="10" material="transparent: true"></a-plane>
+    <a-plane visible="false" sound="src: #themeSound; loop: true; autoplay: true" position="0 0 0" rotation="-90 0 0" width="10"></a-plane>
     <a-sky src="#skyTexture"></a-sky>
-    <a-entity camera="userHeight: 1.6" look-controls wasd-controls position="0 0.1 0">
+    <a-entity id="thePlayer" camera="userHeight: 1.6" look-controls wasd-controls position="0 0.1 0" player-collider static-body="shape: sphere; sphereRadius: 0.02;"
+      sphere-collider="objects: [space-rock];">
       <a-entity cursor position="0 0 -0.5" geometry="primitive: circle; radius: 0.01; segments: 4;" material="color: #FF4444; shader: flat"></a-entity>
       <a-entity hud-score>
         <!-- shadow effect helps with readability -->
         <a-text color="white" position="0.2 0.2 -1" align="right" anchor="right" baseline="top" scale="0.2 0.2" value="Hello\nWorld"></a-text>
         <a-text color="black" position="0.205 0.205 -1.01" align="right" anchor="right" baseline="top" scale="0.2 0.2" value="Hello\nWorld"></a-text>
       </a-entity>
+      <a-entity id="endBuzzer" sound="src: #endSound; volume: 10" position="0 0 0"></a-entity>
     </a-entity>
+    <!-- register a collider with rock -->
     <a-entity vive-controls="hand: left"></a-entity>
     <a-entity vive-controls="hand: right"></a-entity>
   </a-scene>
