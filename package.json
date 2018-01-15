@@ -4,7 +4,8 @@
   "description": "webvr aframe space debris FPS game",
   "main": "index.js",
   "scripts": {
-    "start": "http-server public -p3000 -o",
+    "start": "live-server public --port=3000 --wait=1000",
+    "sky-pede": "live-server sky-pede --port=3000 --wait=1000",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -21,8 +22,8 @@
   "bugs": {
     "url": "https://github.com/sullivanpt/space-debris/issues"
   },
-  "homepage": "https://github.com/sullivanpt/space-debris#readme",
+  "homepage": "https://sullivanpt.github.io/space-debris/",
   "devDependencies": {
-    "http-server": "^0.10.0"
+    "live-server": "^1.2.0"
   }
 }

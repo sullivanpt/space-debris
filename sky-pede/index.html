@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en-US">
+
+<head>
+  <meta charset='utf-8'>
+
+  <title>Sky Pede</title>
+  <script src="https://aframe.io/releases/0.7.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lodash@4.17.4/lodash.min.js"></script>
+</head>
+
+<body>
+  <script>
+    /**
+     * this is a score counter that shows increments briefly before changing the sum
+     */
+    AFRAME.registerComponent('hud-score', {
+      init () {
+        this.textEls = this.el.querySelectorAll('a-text')
+        this.el.sceneEl.addEventListener('pede-hit-missile', this.pedeHitMissile.bind(this))
+        this.el.sceneEl.addEventListener('pede-hit-player', this.pedeHitPlayer.bind(this))
+        this.resetScore()
+      },
+      tick () {
+        if (this.prune()) this.format()
+      },
+      resetScore () {
+        this.total = 0
+        this.history = []
+        this.format()
+      },
+      prune () {
+        if (!this.history.length) return
+        let tClip = Date.now() - 2000 // 2 seconds until +amount is added to total
+        let expired = _.remove(this.history, e => e.ts < tClip)
+        _.forEach(expired, e => { this.total += e.amount })
+        return expired.length
+      },
+      format () {
+        let s = '' + this.total + '\n' + this.history.map(a => '+' + a.amount).join('\n')
+        _.forEach(this.textEls, (el) => el.setAttribute('value', s))
+      },
+      addScore (amount) {
+        this.history.push({ ts: Date.now(), amount })
+        this.prune()
+        this.format()
+      },
+      pedeHitMissile () {
+        this.addScore(10)
+      },
+      pedeHitPlayer () {
+        this.resetScore()
+      }
+    })
+    /**
+     * like force-pushable but positions object at camera
+     */
+    AFRAME.registerComponent('missile-start', {
+      schema: {
+        range: { default: 40 } // how far missile travels
+      },
+      init () {
+        this.pStart = new THREE.Vector3()
+        this.sourceEl = this.el.sceneEl.querySelector('[camera]')
+        this.animationEl = this.el.querySelector('a-animation')
+        this.animationEl.addEventListener('animationend', this.onAnimEnd.bind(this))
+        window.addEventListener('click', _.throttle(this.onCursor.bind(this), 1000, { trailing: false }))
+        window.addEventListener('triggerdown', _.throttle(this.onTrigger.bind(this), 1000, { trailing: false }))
+      },
+      onTrigger () {
+        // this is wmr trigger
+        this.onCursor()
+      },
+      onCursor () {
+        // Compute direction of force, normalize, then scale.
+        // Now, apply the same rotation to the vector that is applied to the camera:
+        let startPoint = this.sourceEl.getAttribute('position')
+        let endPoint = new THREE.Vector3(0, 0, - 1);
+        endPoint.applyQuaternion(this.sourceEl.object3D.quaternion)
+        endPoint.normalize()
+        endPoint.multiplyScalar(this.data.range)
+        endPoint.add(startPoint)
+
+        this.animationEl.setAttribute('from', AFRAME.utils.coordinates.stringify(startPoint))
+        this.animationEl.setAttribute('to', AFRAME.utils.coordinates.stringify(endPoint))
+
+        this.el.setAttribute('visible', true)
+
+        // TODO: debug why animation doesn't play every time
+        this.el.emit('missile-fly')
+      },
+      onAnimEnd () {
+        // TODO: probably should remove from scene or move out of playfield
+        this.el.setAttribute('visible', false)
+      }
+    })
+    AFRAME.registerComponent('player-missile', {
+      dependencies: [
+        'missile-start'
+      ]
+    })
+  </script>
+
+  <a-scene physics="gravity: 0">
+    <a-assets>
+      <img id="skyTexture" src="assets/6186462401_c911e604d1_b.jpg">
+      <img id="mushroomTexture" src="assets/purple-texture-coral.jpg">
+      <img id="pedeHeadTexture" src="assets/c4d_eye_texture_by_kensei99.jpg">
+      <img id="pedeBodyTexture" src="assets/cat_fur_texture_1_by_orangen_stock-d357pgx.jpg">
+      <img id="missileTexture" src="assets/4405690883_3712f1afa6_z.jpg">
+    </a-assets>
+
+    <!-- enemies -->
+    <a-sphere src="#pedeHeadTexture" position="2 7 -3" radius="1.1"></a-sphere>
+    <a-sphere src="#pedeBodyTexture" position="-2 7 -3" radius="1"></a-sphere>
+
+    <!-- obstacles -->
+    <a-cone src="#mushroomTexture" position="0 5 -5" radius="1" height="2" rotation="0 0 180"></a-cone>
+    <a-cylinder src="#mushroomTexture" position="2 5 -5" radius="1" height="2"></a-cylinder>
+    <a-box src="#mushroomTexture" position="-2 5 -5" width="2" height="2" depth="2"></a-box>
+
+    <!-- missiles -->
+    <a-sphere player-missile id="playerMissile" position="0 -2 -5" radius="0.5" src="#missileTexture" emissive="#b60">
+      <a-animation begin="missile-fly" attribute="position" from="0 0 10" to="2 7 -3" dur="2000"></a-animation>
+    </a-sphere>
+
+    <!-- playfield, controls, camera -->
+    <a-sky src="#skyTexture"></a-sky>
+    <!-- register a collider with rock -->
+    <a-entity id="thePlayer" camera="userHeight: 1.6" look-controls wasd-controls position="0 0.1 0">
+      <a-entity cursor position="0 0 -0.5" geometry="primitive: circle; radius: 0.01; segments: 4;" material="color: #FF4444; shader: flat"></a-entity>
+      <a-entity hud-score>
+        <!-- shadow effect helps with readability -->
+        <a-text color="white" position="0.2 0.2 -1" align="right" anchor="right" baseline="top" scale="0.2 0.2" value="Hello\nWorld"></a-text>
+        <a-text color="black" position="0.205 0.205 -1.01" align="right" anchor="right" baseline="top" scale="0.2 0.2" value="Hello\nWorld"></a-text>
+      </a-entity>
+    </a-entity>
+    <!-- laser-controls not working with wmr -->
+    <a-entity windows-motion-controls="hand: left"></a-entity>
+    <a-entity windows-motion-controls="hand: right"></a-entity>
+  </a-scene>
+</body>
+
+</html>
