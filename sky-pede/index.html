@@ -5,7 +5,8 @@
   <meta charset='utf-8'>
 
   <title>Sky Pede</title>
-  <script src="https://aframe.io/releases/0.7.0/aframe.min.js"></script>
+  <script src="https://rawgit.com/ngokevin/aframe/animationbugless/dist/aframe-master.min.js"></script>
+  <script src="https://unpkg.com/aframe-animation-component@4.0.0-beta8/dist/aframe-animation-component.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/lodash@4.17.4/lodash.min.js"></script>
 </head>
 
@@ -15,63 +16,100 @@
      * this is a score counter that shows increments briefly before changing the sum
      */
     AFRAME.registerComponent('hud-score', {
-      init () {
+      init() {
         this.textEls = this.el.querySelectorAll('a-text')
         this.el.sceneEl.addEventListener('pede-hit-missile', this.pedeHitMissile.bind(this))
         this.el.sceneEl.addEventListener('pede-hit-player', this.pedeHitPlayer.bind(this))
         this.resetScore()
       },
-      tick () {
+      tick() {
         if (this.prune()) this.format()
       },
-      resetScore () {
+      resetScore() {
         this.total = 0
         this.history = []
         this.format()
       },
-      prune () {
+      prune() {
         if (!this.history.length) return
         let tClip = Date.now() - 2000 // 2 seconds until +amount is added to total
         let expired = _.remove(this.history, e => e.ts < tClip)
         _.forEach(expired, e => { this.total += e.amount })
         return expired.length
       },
-      format () {
+      format() {
         let s = '' + this.total + '\n' + this.history.map(a => '+' + a.amount).join('\n')
         _.forEach(this.textEls, (el) => el.setAttribute('value', s))
       },
-      addScore (amount) {
+      addScore(amount) {
         this.history.push({ ts: Date.now(), amount })
         this.prune()
         this.format()
       },
-      pedeHitMissile () {
+      pedeHitMissile() {
         this.addScore(10)
       },
-      pedeHitPlayer () {
+      pedeHitPlayer() {
         this.resetScore()
+      }
+    })
+    /**
+     * spawn game entities from HTML templates
+     * TODO: will be more performant if we keep a hidden pool of objects in the DOM
+     */
+    AFRAME.registerSystem('pool', {
+      spawn(template, position, options) {
+        var templateEl = document.querySelector('#' + template) // scriptEl.getAttribute('type').includes('html')
+        let node = document.importNode(templateEl.content, true)
+        let el = node.firstElementChild // node is a #document-fragment
+        if (position) el.setAttribute('position', position)
+        _.forEach(options, (key, value) => el.setAttribute(key, value))
+        this.el.sceneEl.appendChild(node)
+      },
+      recycle(el) {
+        el.parentNode.removeChild(el)
+      }
+    })
+    /**
+     * global input handler
+     */
+    AFRAME.registerSystem('the-game', {
+      init() {
+        window.addEventListener('click', _.throttle(this.onCursor.bind(this), 500, { trailing: false }))
+        window.addEventListener('triggerdown', _.throttle(this.onTrigger.bind(this), 500, { trailing: false }))
+      },
+      spawn(...args) { // typing saver
+        this.sceneEl.systems.pool.spawn(...args)
+      },
+      onTrigger() {
+        // this is wmr trigger
+        this.onCursor()
+      },
+      onCursor() {
+        if (!this.started) {
+          this.startGame()
+        } else {
+          this.spawn('playerMissile')
+        }
+      },
+      startGame() {
+        this.started = true
+        this.spawn('obstacle1')
+        this.spawn('obstacle1', '0 -2 -2')
       }
     })
     /**
      * like force-pushable but positions object at camera
      */
-    AFRAME.registerComponent('missile-start', {
+    AFRAME.registerComponent('player-missile', {
       schema: {
         range: { default: 40 } // how far missile travels
       },
-      init () {
+      init() {
         this.pStart = new THREE.Vector3()
         this.sourceEl = this.el.sceneEl.querySelector('[camera]')
-        this.animationEl = this.el.querySelector('a-animation')
-        this.animationEl.addEventListener('animationend', this.onAnimEnd.bind(this))
-        window.addEventListener('click', _.throttle(this.onCursor.bind(this), 1000, { trailing: false }))
-        window.addEventListener('triggerdown', _.throttle(this.onTrigger.bind(this), 1000, { trailing: false }))
-      },
-      onTrigger () {
-        // this is wmr trigger
-        this.onCursor()
-      },
-      onCursor () {
+        this.el.addEventListener('animationcomplete', this.onAnimEnd.bind(this))
+
         // Compute direction of force, normalize, then scale.
         // Now, apply the same rotation to the vector that is applied to the camera:
         let startPoint = this.sourceEl.getAttribute('position')
@@ -81,27 +119,42 @@
         endPoint.multiplyScalar(this.data.range)
         endPoint.add(startPoint)
 
-        this.animationEl.setAttribute('from', AFRAME.utils.coordinates.stringify(startPoint))
-        this.animationEl.setAttribute('to', AFRAME.utils.coordinates.stringify(endPoint))
-
-        this.el.setAttribute('visible', true)
-
-        // TODO: debug why animation doesn't play every time
-        this.el.emit('missile-fly')
+        this.el.setAttribute('position', AFRAME.utils.coordinates.stringify(startPoint))
+        this.el.setAttribute('animation', 'to', AFRAME.utils.coordinates.stringify(endPoint))
+        this.el.emit('missile-start')
       },
-      onAnimEnd () {
-        // TODO: probably should remove from scene or move out of playfield
-        this.el.setAttribute('visible', false)
+      onAnimEnd() {
+        this.el.sceneEl.systems.pool.recycle(this.el)
       }
-    })
-    AFRAME.registerComponent('player-missile', {
-      dependencies: [
-        'missile-start'
-      ]
     })
   </script>
 
-  <a-scene physics="gravity: 0">
+  <!-- missiles -->
+  <template id="playerMissile">
+    <a-sphere player-missile position="0 -2 -5" radius="0.5" src="#missileTexture" emissive="#b60" animation="property: position; startEvents: missile-start; dur: 2000; to: 2 7 -3">
+    </a-sphere>
+  </template>
+
+  <!-- enemies -->
+  <template id="pedeHead">
+    <a-sphere src="#pedeHeadTexture" position="2 7 -3" radius="1.1"></a-sphere>
+  </template>
+  <template id="pedeBofy">
+    <a-sphere src="#pedeBodyTexture" position="-2 7 -3" radius="1"></a-sphere>
+  </template>
+
+  <!-- obstacles -->
+  <template id="obstacle3">
+    <a-cone src="#mushroomTexture" position="0 5 -5" radius="1" height="2" rotation="0 0 180"></a-cone>
+  </template>
+  <template id="obstacle2">
+    <a-cylinder src="#mushroomTexture" position="2 5 -5" radius="1" height="2"></a-cylinder>
+  </template>
+  <template id="obstacle1">
+    <a-box src="#mushroomTexture" position="-2 5 -5" width="2" height="2" depth="2"></a-box>
+  </template>
+
+  <a-scene the-game>
     <a-assets>
       <img id="skyTexture" src="assets/6186462401_c911e604d1_b.jpg">
       <img id="mushroomTexture" src="assets/purple-texture-coral.jpg">
@@ -109,20 +162,6 @@
       <img id="pedeBodyTexture" src="assets/cat_fur_texture_1_by_orangen_stock-d357pgx.jpg">
       <img id="missileTexture" src="assets/4405690883_3712f1afa6_z.jpg">
     </a-assets>
-
-    <!-- enemies -->
-    <a-sphere src="#pedeHeadTexture" position="2 7 -3" radius="1.1"></a-sphere>
-    <a-sphere src="#pedeBodyTexture" position="-2 7 -3" radius="1"></a-sphere>
-
-    <!-- obstacles -->
-    <a-cone src="#mushroomTexture" position="0 5 -5" radius="1" height="2" rotation="0 0 180"></a-cone>
-    <a-cylinder src="#mushroomTexture" position="2 5 -5" radius="1" height="2"></a-cylinder>
-    <a-box src="#mushroomTexture" position="-2 5 -5" width="2" height="2" depth="2"></a-box>
-
-    <!-- missiles -->
-    <a-sphere player-missile id="playerMissile" position="0 -2 -5" radius="0.5" src="#missileTexture" emissive="#b60">
-      <a-animation begin="missile-fly" attribute="position" from="0 0 10" to="2 7 -3" dur="2000"></a-animation>
-    </a-sphere>
 
     <!-- playfield, controls, camera -->
     <a-sky src="#skyTexture"></a-sky>
