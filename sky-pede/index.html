@@ -18,9 +18,8 @@
     AFRAME.registerComponent('hud-score', {
       init() {
         this.textEls = this.el.querySelectorAll('a-text')
-        this.el.sceneEl.addEventListener('obstacle-hit-missile', this.obstacleHitMissile.bind(this))
-        this.el.sceneEl.addEventListener('pede-hit-missile', this.pedeHitMissile.bind(this))
-        this.el.sceneEl.addEventListener('pede-hit-player', this.pedeHitPlayer.bind(this))
+        this.el.sceneEl.addEventListener('score-reset', this.resetScore.bind(this))
+        this.el.sceneEl.addEventListener('score-change', this.scoreChange.bind(this))
         this.resetScore()
       },
       tick() {
@@ -47,14 +46,8 @@
         this.prune()
         this.format()
       },
-      obstacleHitMissile() {
-        this.addScore(10)
-      },
-      pedeHitMissile() {
-        this.addScore(100)
-      },
-      pedeHitPlayer() {
-        this.resetScore()
+      scoreChange(e) {
+        this.addScore(e.detail.amount)
       }
     })
     /**
@@ -62,10 +55,20 @@
      * TODO: will be more performant if we keep a hidden pool of objects in the DOM
      */
     AFRAME.registerSystem('pool', {
+      firstElementChild(fragment) { // https://developer.mozilla.org/en-US/docs/Web/API/ParentNode/firstElementChild
+        if (fragment.firstElementChild) return fragment.firstElementChild
+        var node, nodes = fragment.childNodes, i = 0;
+        while (node = nodes[i++]) {
+          if (node.nodeType === 1) {
+            return node;
+          }
+        }
+        return null;
+      },
       spawn(template, position, options) {
         var templateEl = document.querySelector('#' + template) // scriptEl.getAttribute('type').includes('html')
         let node = document.importNode(templateEl.content, true)
-        let el = node.firstElementChild // node is a #document-fragment
+        let el = this.firstElementChild(node) // node is a #document-fragment
         if (position) el.setAttribute('position', position)
         _.forEach(options, (key, value) => el.setAttribute(key, value))
         this.el.sceneEl.appendChild(node)
@@ -125,35 +128,44 @@
      */
     AFRAME.registerSystem('collider', {
       init() {
-        this.entities = []
+        this.statics = []
+        this.dynamics = []
       },
       registerMe(obj) {
-        this.entities.push(obj)
+        if (obj.data.body === 'static') this.statics.push(obj)
+        else this.dynamics.push(obj)
       },
       unregisterMe(obj) {
-        var index = this.entities.indexOf(obj)
-        this.entities.splice(index, 1)
+        if (obj.data.body === 'static') _.remove(this.statics, obj)
+        else _.remove(this.dynamics, obj)
+      },
+      testCollide(dObj, sObj) {
+        if (dObj.el.object3D.position.distanceToSquared(sObj.el.object3D.position) < 2) { // TODO: compute '2' as square of collision distance
+          if (dObj.data.priority < sObj.data.priority)[dObj, sObj] = [sObj, dObj] // swap
+          dObj.el.emit('collide', { other: sObj.el, otherName: sObj.data.name, targetName: dObj.data.name }, false)
+          return true
+        }
       },
       tick() {
-        // O(n^2) not very efficient
+        // O(n^2)+O(n*m) not as efficient as it could be, but hopefully the dynamics list is pretty short
         // object can be deleted right under us as we loop
-        for (let i = 0; i < this.entities.length; i++) {
-          for (let y = i + 1; y < this.entities.length; y++) {
-            let ei = this.entities[i]
-            let ey = this.entities[y]
-            if (ei.el.object3D.position.distanceToSquared(ey.el.object3D.position) < 2) {
-              // non-static body gets priority for events
-              if (ei.data.body === 'static') ey.el.emit('collide', { other: ei }, false)
-              else ei.el.emit('collide', { other: ey }, false)
-            }
+        for (let i = 0; i < this.dynamics.length; i++) {
+          for (let y = i + 1; y < this.dynamics.length; y++) {
+            if (this.testCollide(this.dynamics[i], this.dynamics[y]) && i >= this.dynamics.length) break;
+          }
+        }
+        for (let i = 0; i < this.dynamics.length; i++) {
+          for (let y = i + 1; y < this.statics.length; y++) {
+            if (this.testCollide(this.dynamics[i], this.statics[y]) && i >= this.dynamics.length) break;
           }
         }
       }
     })
     AFRAME.registerComponent('collider', {
       schema: {
-        name: { default: 'unknown' },
-        body: { default: 'static' }
+        name: { default: 'unknown' }, // passed to 'collide' event handler for switching
+        priority: { default: 0 }, // the colliding entity with the higher priority gets the 'collide' event
+        body: { default: 'dynamic' } // dynamic or static. static will not collide with each other
       },
       init() {
         this.system.registerMe(this)
@@ -172,7 +184,6 @@
       init() {
         this.pStart = new THREE.Vector3()
         this.sourceEl = this.el.sceneEl.querySelector('[camera]')
-        this.el.addEventListener('collide', this.onCollide.bind(this))
         this.el.addEventListener('animationcomplete', this.onAnimEnd.bind(this))
 
         // Compute direction of force, normalize, then scale.
@@ -190,11 +201,22 @@
       },
       onAnimEnd() {
         this.el.sceneEl.systems.pool.recycle(this.el)
+      }
+    })
+    AFRAME.registerComponent('obstacle', {
+      schema: {
+        state: { default: 1 } // 1, 2, or 3, then gone
+      },
+      init() {
+        this.el.addEventListener('collide', this.onCollide.bind(this))
       },
       onCollide(e) {
+        if (e.detail.otherName !== 'missile') return
+        this.el.sceneEl.systems.pool.recycle(e.detail.other)
+        let next = this.data.state + 1
+        if (next <= 3) this.el.sceneEl.systems.pool.spawn('obstacle' + next, AFRAME.utils.coordinates.stringify(this.el.getAttribute('position')))
+        this.el.sceneEl.emit('score-change', { amount: this.data.state })
         this.el.sceneEl.systems.pool.recycle(this.el)
-        this.el.sceneEl.systems.pool.recycle(e.detail.other.el) // TODO: delegate this
-        this.el.sceneEl.emit('obstacle-hit-missile')
       }
     })
   </script>
@@ -215,13 +237,16 @@
 
   <!-- obstacles -->
   <template id="obstacle3">
-    <a-cone src="#mushroomTexture" position="0 5 -5" radius="1" height="2" rotation="0 0 180"></a-cone>
+    <a-cone obstacle="state: 3" collider="name: obstacle; body: static; priority: 10" src="#mushroomTexture" position="0 5 -5"
+      radius="1" height="2" rotation="0 0 180"></a-cone>
   </template>
   <template id="obstacle2">
-    <a-cylinder src="#mushroomTexture" position="2 5 -5" radius="1" height="2"></a-cylinder>
+    <a-cylinder obstacle="state: 2" collider="name: obstacle; body: static; priority: 10" src="#mushroomTexture" position="2 5 -5"
+      radius="1" height="2"></a-cylinder>
   </template>
   <template id="obstacle1">
-    <a-box collider="name: obstacle; body: static" src="#mushroomTexture" position="-2 5 -5" width="2" height="2" depth="2"></a-box>
+    <a-box obstacle="state: 1" collider="name: obstacle; body: static; priority: 10" src="#mushroomTexture" position="-2 5 -5"
+      width="2" height="2" depth="2"></a-box>
   </template>
 
   <a-scene the-game>
