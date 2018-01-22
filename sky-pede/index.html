@@ -18,6 +18,7 @@
     AFRAME.registerComponent('hud-score', {
       init() {
         this.textEls = this.el.querySelectorAll('a-text')
+        this.el.sceneEl.addEventListener('obstacle-hit-missile', this.obstacleHitMissile.bind(this))
         this.el.sceneEl.addEventListener('pede-hit-missile', this.pedeHitMissile.bind(this))
         this.el.sceneEl.addEventListener('pede-hit-player', this.pedeHitPlayer.bind(this))
         this.resetScore()
@@ -46,8 +47,11 @@
         this.prune()
         this.format()
       },
-      pedeHitMissile() {
+      obstacleHitMissile() {
         this.addScore(10)
+      },
+      pedeHitMissile() {
+        this.addScore(100)
       },
       pedeHitPlayer() {
         this.resetScore()
@@ -92,10 +96,70 @@
           this.spawn('playerMissile')
         }
       },
+      eachSpot(cb) {
+        for (let i = 0; i < 30 * 30 * 30; i++) cb(i)
+      },
+      spotFromIdx(i) {
+        const block = 2
+        let x = i % 30 - 15
+        let y = i / 30 / 30
+        let z = (i / 30) % 30 - 15
+        x *= block
+        y *= block
+        z *= block
+        // relative to start: positive X to right, positive Y up, negative Z ahead
+        return { x, y, z }
+      },
       startGame() {
         this.started = true
-        this.spawn('obstacle1')
-        this.spawn('obstacle1', '0 -2 -2')
+        this.eachSpot(i => {
+          if (Math.random() < 0.01) {
+            let v = this.spotFromIdx(i)
+            if (v.y > 4) this.spawn('obstacle1', AFRAME.utils.coordinates.stringify(v))
+          }
+        })
+      }
+    })
+    /**
+     * simple collider
+     */
+    AFRAME.registerSystem('collider', {
+      init() {
+        this.entities = []
+      },
+      registerMe(obj) {
+        this.entities.push(obj)
+      },
+      unregisterMe(obj) {
+        var index = this.entities.indexOf(obj)
+        this.entities.splice(index, 1)
+      },
+      tick() {
+        // O(n^2) not very efficient
+        // object can be deleted right under us as we loop
+        for (let i = 0; i < this.entities.length; i++) {
+          for (let y = i + 1; y < this.entities.length; y++) {
+            let ei = this.entities[i]
+            let ey = this.entities[y]
+            if (ei.el.object3D.position.distanceToSquared(ey.el.object3D.position) < 2) {
+              // non-static body gets priority for events
+              if (ei.data.body === 'static') ey.el.emit('collide', { other: ei }, false)
+              else ei.el.emit('collide', { other: ey }, false)
+            }
+          }
+        }
+      }
+    })
+    AFRAME.registerComponent('collider', {
+      schema: {
+        name: { default: 'unknown' },
+        body: { default: 'static' }
+      },
+      init() {
+        this.system.registerMe(this)
+      },
+      remove() {
+        this.system.unregisterMe(this)
       }
     })
     /**
@@ -108,6 +172,7 @@
       init() {
         this.pStart = new THREE.Vector3()
         this.sourceEl = this.el.sceneEl.querySelector('[camera]')
+        this.el.addEventListener('collide', this.onCollide.bind(this))
         this.el.addEventListener('animationcomplete', this.onAnimEnd.bind(this))
 
         // Compute direction of force, normalize, then scale.
@@ -125,13 +190,18 @@
       },
       onAnimEnd() {
         this.el.sceneEl.systems.pool.recycle(this.el)
+      },
+      onCollide(e) {
+        this.el.sceneEl.systems.pool.recycle(this.el)
+        this.el.sceneEl.systems.pool.recycle(e.detail.other.el) // TODO: delegate this
+        this.el.sceneEl.emit('obstacle-hit-missile')
       }
     })
   </script>
 
   <!-- missiles -->
   <template id="playerMissile">
-    <a-sphere player-missile position="0 -2 -5" radius="0.5" src="#missileTexture" emissive="#b60" animation="property: position; startEvents: missile-start; dur: 2000; to: 2 7 -3">
+    <a-sphere collider="name: missile" player-missile position="0 -2 -5" radius="0.5" src="#missileTexture" emissive="#b60" animation="property: position; startEvents: missile-start; dur: 2000; to: 2 7 -3">
     </a-sphere>
   </template>
 
@@ -151,7 +221,7 @@
     <a-cylinder src="#mushroomTexture" position="2 5 -5" radius="1" height="2"></a-cylinder>
   </template>
   <template id="obstacle1">
-    <a-box src="#mushroomTexture" position="-2 5 -5" width="2" height="2" depth="2"></a-box>
+    <a-box collider="name: obstacle; body: static" src="#mushroomTexture" position="-2 5 -5" width="2" height="2" depth="2"></a-box>
   </template>
 
   <a-scene the-game>
